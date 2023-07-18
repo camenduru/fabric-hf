@@ -10,13 +10,33 @@ from fabric.generator import AttentionBasedGenerator
 model_name = ""
 model_ckpt = "https://huggingface.co/Lykon/DreamShaper/blob/main/DreamShaper_7_pruned.safetensors"
 
-dtype = torch.float16 if torch.cuda.is_available() else torch.float32
-device = "cuda" if torch.cuda.is_available() else "cpu"
-generator = AttentionBasedGenerator(
-    model_name=model_name if model_name else None,
-    model_ckpt=model_ckpt if model_ckpt else None,
-    torch_dtype=dtype,
-).to(device)
+class GeneratorWrapper:
+  def __init__(self, model_name=None, model_ckpt=None):
+    self.model_name = model_name if model_name else None
+    self.model_ckpt = model_ckpt if model_ckpt else None
+    self.dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+    self.device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    self.reload()
+
+  def generate(self, *args, **kwargs):
+    return self.generator.generate(*args, **kwargs)
+
+  def to(self, device):
+    return self.generator.to(device)
+
+  def reload(self):
+    if hasattr(self, "generator"):
+      del self.generator
+    if self.device == "cuda":
+      torch.cuda.empty_cache()
+    self.generator = AttentionBasedGenerator(
+        model_name=self.model_name,
+        model_ckpt=self.model_ckpt,
+        torch_dtype=self.dtype,
+    ).to(self.device)
+
+generator = GeneratorWrapper(model_name, model_ckpt)
 
 
 css = """
@@ -96,33 +116,44 @@ def generate_fn(
         liked = []
         disliked = disliked[-max_feedback_imgs:]
     # else: keep all feedback images
+    
+    generate_kwargs = {
+        "prompt": prompt,
+        "negative_prompt": neg_prompt,
+        "liked": liked,
+        "disliked": disliked,
+        "denoising_steps": denoising_steps,
+        "guidance_scale": guidance_scale,
+        "feedback_start": feedback_start,
+        "feedback_end": feedback_end,
+        "min_weight": min_weight,
+        "max_weight": max_weight,
+        "neg_scale": neg_scale,
+        "seed": seed,
+        "n_images": batch_size,
+    }
 
-    images = generator.generate(
-        prompt=prompt,
-        negative_prompt=neg_prompt,
-        liked=liked,
-        disliked=disliked,
-        denoising_steps=denoising_steps,
-        guidance_scale=guidance_scale,
-        feedback_start=feedback_start,
-        feedback_end=feedback_end,
-        min_weight=min_weight,
-        max_weight=max_weight,
-        neg_scale=neg_scale,
-        seed=seed,
-        n_images=batch_size,
-    )
+    try:
+      images = generator.generate(**generate_kwargs)
+    except RuntimeError as err:
+      if 'out of memory' in str(err):
+        generator.reload()
+      raise
     return [(img, f"Image {i+1}") for i, img in enumerate(images)], images
   except Exception as err:
     raise gr.Error(str(err))
 
 
 def add_img_from_list(i, curr_imgs, all_imgs):
+  if all_imgs is None:
+    all_imgs = []
   if i >= 0 and i < len(curr_imgs):
     all_imgs.append(curr_imgs[i])
   return all_imgs, all_imgs  # return (gallery, state)
 
 def add_img(img, all_imgs):
+  if all_imgs is None:
+    all_imgs = []
   all_imgs.append(img)
   return None, all_imgs, all_imgs
 
@@ -148,7 +179,7 @@ with gr.Blocks(css=css) as demo:
     with gr.Column():
       denoising_steps = gr.Slider(1, 100, value=20, step=1, label="Sampling steps")
       guidance_scale = gr.Slider(0.0, 30.0, value=6, step=0.25, label="CFG scale")
-      batch_size = gr.Slider(1, 10, value=4, step=1, label="Batch size")
+      batch_size = gr.Slider(1, 10, value=4, step=1, label="Batch size", interactive=False)
       seed = gr.Number(-1, minimum=-1, precision=0, label="Seed")
       max_feedback_imgs = gr.Slider(0, 20, value=6, step=1, label="Max. feedback images", info="Maximum number of liked/disliked images to be used. If exceeded, only the most recent images will be used as feedback. (NOTE: large number of feedback imgs => high VRAM requirements)")
       feedback_enabled = gr.Checkbox(True, label="Enable feedback", interactive=True)
@@ -222,8 +253,8 @@ with gr.Blocks(css=css) as demo:
   liked_img_input.upload(add_img, [liked_img_input, liked_imgs], [liked_img_input, like_gallery, liked_imgs], queue=False)
   disliked_img_input.upload(add_img, [disliked_img_input, disliked_imgs], [disliked_img_input, dislike_gallery, disliked_imgs], queue=False)
 
-  clear_liked_btn.click(lambda: [None, None], None, [liked_imgs, like_gallery], queue=False)
-  clear_disliked_btn.click(lambda: [None, None], None, [disliked_imgs, dislike_gallery], queue=False)
+  clear_liked_btn.click(lambda: [[], []], None, [liked_imgs, like_gallery], queue=False)
+  clear_disliked_btn.click(lambda: [[], []], None, [disliked_imgs, dislike_gallery], queue=False)
 
-demo.queue(8)
-demo.launch()
+demo.queue(1)
+demo.launch(debug=True)
