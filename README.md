@@ -1,6 +1,6 @@
 ---
-title: Fabric
-emoji: 🏢
+title: "FABRIC: Personalizing Diffusion Models with Iterative Feedback"
+emoji: 🎨
 colorFrom: blue
 colorTo: purple
 sdk: gradio
