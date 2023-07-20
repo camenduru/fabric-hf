@@ -20,6 +20,8 @@ class GeneratorWrapper:
     self.reload()
 
   def generate(self, *args, **kwargs):
+    if not hasattr(self, "generator"):
+        self.reload()
     return self.generator.generate(*args, **kwargs)
 
   def to(self, device):
