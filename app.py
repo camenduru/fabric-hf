@@ -259,4 +259,4 @@ with gr.Blocks(css=css) as demo:
   clear_disliked_btn.click(lambda: [[], []], None, [disliked_imgs, dislike_gallery], queue=False)
 
 demo.queue(1)
-demo.launch(debug=True)
+demo.launch(debug=True, share=True)
